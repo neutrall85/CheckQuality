@@ -1,0 +1,87 @@
+from typing import Dict, List, Tuple, Optional
+from core.models.document import Document
+
+
+class Deduplicator:
+    """Объединяет документы с одинаковым ключом и собирает статистику дубликатов."""
+
+    def __init__(self, key_mode: str = "document_number"):
+        self.key_mode = key_mode
+
+    def _make_key(self, doc: Document) -> str:
+        if self.key_mode == "compound":
+            return f"{doc.doc_type}||{doc.number}"
+        return doc.number
+
+    def deduplicate(self, docs: list) -> Tuple[Dict[str, Document], List[dict]]:
+        """
+        Возвращает кортеж:
+        - merged: словарь объединённых документов по ключу
+        - dup_info: список словарей с информацией о дубликатах:
+            {
+                'key': ключ дедупликации,
+                'count': количество исходных записей,
+                'types': список типов документов,
+                'numbers': список номеров (может быть одинаковым),
+                'developers': список всех разработчиков,
+                'dates': список строковых представлений дат проверки (или поступления)
+            }
+        """
+        merged: Dict[str, Document] = {}
+        # Временное хранилище для сбора информации о дубликатах
+        dup_collector: Dict[str, dict] = {}
+
+        for doc in docs:
+            key = self._make_key(doc)
+            if key in merged:
+                existing = merged[key]
+                existing.a4_count += doc.a4_count
+                existing.errors_cat1 += doc.errors_cat1
+                existing.errors_cat2 += doc.errors_cat2
+                existing.developers = list(set(existing.developers + doc.developers))
+                if doc.check_date:
+                    if not existing.check_date or doc.check_date > existing.check_date:
+                        existing.check_date = doc.check_date
+                        existing.doc_type = doc.doc_type
+
+                # Обновляем информацию о дубликате
+                info = dup_collector[key]
+                info['count'] += 1
+                info['types'].append(doc.doc_type)
+                info['numbers'].append(doc.number)
+                info['developers'].extend(doc.developers)
+                info['dates'].append(str(doc.check_date) if doc.check_date else str(doc.receipt_date))
+            else:
+                merged[key] = Document(
+                    doc_type=doc.doc_type,
+                    number=doc.number,
+                    developers=doc.developers,
+                    receipt_date=doc.receipt_date,
+                    a4_count=doc.a4_count,
+                    errors_cat1=doc.errors_cat1,
+                    errors_cat2=doc.errors_cat2,
+                    check_date=doc.check_date
+                )
+                # Начинаем сбор информации
+                dup_collector[key] = {
+                    'count': 1,
+                    'types': [doc.doc_type],
+                    'numbers': [doc.number],
+                    'developers': list(doc.developers),
+                    'dates': [str(doc.check_date) if doc.check_date else str(doc.receipt_date)]
+                }
+
+        # Формируем итоговый список дубликатов (только те, где count > 1)
+        dup_info = []
+        for key, info in dup_collector.items():
+            if info['count'] > 1:
+                dup_info.append({
+                    'key': key,
+                    'count': info['count'],
+                    'types': list(set(info['types'])),
+                    'numbers': list(set(info['numbers'])),
+                    'developers': list(set(info['developers'])),
+                    'dates': info['dates']  # оставляем все для истории
+                })
+
+        return merged, dup_info
