@@ -28,7 +28,6 @@ class Deduplicator:
             }
         """
         merged: Dict[str, Document] = {}
-        # Временное хранилище для сбора информации о дубликатах
         dup_collector: Dict[str, dict] = {}
 
         for doc in docs:
@@ -38,11 +37,11 @@ class Deduplicator:
                 existing.a4_count += doc.a4_count
                 existing.errors_cat1 += doc.errors_cat1
                 existing.errors_cat2 += doc.errors_cat2
+                # Разработчики – объединяем уникальных
                 existing.developers = list(set(existing.developers + doc.developers))
                 if doc.check_date:
                     if not existing.check_date or doc.check_date > existing.check_date:
                         existing.check_date = doc.check_date
-                        existing.doc_type = doc.doc_type
 
                 # Обновляем информацию о дубликате
                 info = dup_collector[key]
@@ -62,7 +61,6 @@ class Deduplicator:
                     errors_cat2=doc.errors_cat2,
                     check_date=doc.check_date
                 )
-                # Начинаем сбор информации
                 dup_collector[key] = {
                     'count': 1,
                     'types': [doc.doc_type],
@@ -81,7 +79,7 @@ class Deduplicator:
                     'types': list(set(info['types'])),
                     'numbers': list(set(info['numbers'])),
                     'developers': list(set(info['developers'])),
-                    'dates': info['dates']  # оставляем все для истории
+                    'dates': info['dates']
                 })
 
         return merged, dup_info

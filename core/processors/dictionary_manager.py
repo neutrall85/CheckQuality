@@ -14,8 +14,9 @@ class DictionaryManager:
     def __init__(self, dict_path: Optional[str] = None):
         self.dict_path = dict_path or self.DEFAULT_DICT_PATH
         self.rules: List[Dict] = []
-        self.unknown_handling = "as_is"  # as_is, skip, ask
+        self.unknown_handling = "as_is"
         self.auto_add_unknown = True
+        self._dirty = False
         self.load()
 
     def load(self):
@@ -27,7 +28,6 @@ class DictionaryManager:
             self.rules = data.get("rules", [])
             self.unknown_handling = data.get("unknown_handling", "as_is")
             self.auto_add_unknown = data.get("auto_add_unknown", True)
-            # Сортировка по приоритету (по убыванию)
             self.rules.sort(key=lambda r: r.get("priority", 0), reverse=True)
         except Exception:
             self.rules = []
@@ -77,15 +77,20 @@ class DictionaryManager:
                 "priority": 0,
                 "auto_added": True
             })
-            self._save_rules()
+            self._dirty = True
 
         if self.unknown_handling == "as_is":
             return source_type
         elif self.unknown_handling == "skip":
-            return ""  # документ будет пропущен при пустом типе
+            return ""
         else:
-            # "ask" – в реальном приложении здесь запрос к пользователю, пока как as_is
             return source_type
+
+    def save_if_needed(self):
+        """Сохраняет правила, если были изменения."""
+        if self._dirty:
+            self._save_rules()
+            self._dirty = False
 
     def _save_rules(self):
         data = {

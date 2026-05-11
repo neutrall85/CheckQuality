@@ -74,7 +74,6 @@ def collect_files(paths: List[str]) -> List[str]:
     for p in paths:
         if os.path.isfile(p):
             if p.lower().endswith(('.xlsx', '.xls', '.xlsm')):
-                # Игнорируем временные файлы Excel (~$...)
                 if os.path.basename(p).startswith('~$'):
                     print(f"Предупреждение: '{p}' является временным файлом Excel, пропускается", file=sys.stderr)
                     continue
@@ -314,7 +313,6 @@ def main():
     processor = DocumentProcessor(
         loader=loader,
         pipeline=pipeline,
-        deduplication_key=config.deduplication_key,
         selected_developers=selected_developers
     )
 
@@ -327,18 +325,15 @@ def main():
             input("Нажмите Enter для выхода...")
         return
 
-    print(f"Обработка завершена. Всего документов после дедупликации: {stats.total_docs}")
+    print(f"Обработка завершена. Всего документов: {stats.total_docs}")
 
-    if stats.duplicates:
-        print("\nИнформация об объединённых документах:")
-        for dup in stats.duplicates:
-            print(f"  Ключ: {dup['key']} – объединено {dup['count']} записей")
-            print(f"    Типы: {', '.join(dup['types'])}")
-            print(f"    Разработчики: {', '.join(dup['developers'])}")
-            print(f"    Даты проверок (или поступления): {', '.join(dup['dates'])}")
-        print()
+    # Вывод информации по группам файлов (префиксам)
+    if stats.docs_by_file_prefix:
+        print("\nКоличество документов по группам файлов (префикс до '_'):")
+        for prefix, count in sorted(stats.docs_by_file_prefix.items(), key=lambda x: x[1], reverse=True):
+            print(f"  {prefix}: {count} документов")
     else:
-        print("Дубликаты не обнаружены.\n")
+        print("\nИнформация по группам файлов отсутствует.")
 
     chart_builder = ChartBuilder()
 

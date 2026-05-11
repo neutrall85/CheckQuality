@@ -13,9 +13,11 @@ class Statistics:
     max_errors_cat1: int = 0
     max_errors_cat2: int = 0
 
-    # Новые поля для круговой диаграммы
     total_docs_with_cat1: int = 0
     total_docs_with_cat2: int = 0
+    total_docs_with_only_cat1: int = 0
+    total_docs_with_only_cat2: int = 0
+    total_docs_with_both: int = 0
 
     by_type: Dict[str, Dict[str, int]] = field(default_factory=dict)
     by_developer: Dict[str, Dict[str, int]] = field(default_factory=dict)
@@ -23,6 +25,8 @@ class Statistics:
 
     duplicates: List[Dict] = field(default_factory=list)
 
-    # Фактические границы дат, вычисляются агрегатором
     actual_start_date: Optional[date] = None
     actual_end_date: Optional[date] = None
+
+    # Количество документов по префиксам имён файлов (до первого '_')
+    docs_by_file_prefix: Dict[str, int] = field(default_factory=dict)

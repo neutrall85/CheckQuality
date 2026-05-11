@@ -17,14 +17,14 @@ class PlaceholderRenderer:
     def _process_shapes(self, shapes, context, stats, config):
         for shape in shapes:
             if shape.has_text_frame:
-                self._replace_in_textframe(shape.text_frame, context, stats, config)
+                self._replace_in_textframe(shape, context, stats, config)
             if shape.has_table:
                 pass
-            # Безопасная проверка: есть ли вложенные shape'ы (GroupShape)
             if hasattr(shape, 'shapes'):
                 self._process_shapes(shape.shapes, context, stats, config)
 
-    def _replace_in_textframe(self, text_frame, context, stats, config):
+    def _replace_in_textframe(self, shape, context, stats, config):
+        text_frame = shape.text_frame
         for paragraph in text_frame.paragraphs:
             for run in paragraph.runs:
                 full_text = run.text
@@ -33,15 +33,15 @@ class PlaceholderRenderer:
                 if '{{' in full_text and '}}' in full_text:
                     if '{{developers_table}}' in full_text:
                         run.text = ''
-                        self._insert_developers_table(text_frame, stats)
+                        self._insert_developers_table(text_frame, stats, shape)
                         return
                     elif '{{chart:monthly_trend}}' in full_text:
                         run.text = ''
-                        self._insert_chart_monthly_trend(text_frame, stats)
+                        self._insert_chart_monthly_trend(text_frame, stats, shape)
                         return
                     elif '{{chart:errors_by_doc_type}}' in full_text:
                         run.text = ''
-                        self._insert_chart_errors_by_type(text_frame, stats)
+                        self._insert_chart_errors_by_type(text_frame, stats, shape)
                         return
                     else:
                         for key, value in context.items():
@@ -54,7 +54,14 @@ class PlaceholderRenderer:
         """Безопасно получает объект Slide из text_frame."""
         return text_frame.shape.part.slide
 
-    def _insert_developers_table(self, text_frame, stats):
+    def _remove_shape(self, shape):
+        """Удаляет shape со слайда."""
+        try:
+            shape.element.getparent().remove(shape.element)
+        except Exception:
+            pass
+
+    def _insert_developers_table(self, text_frame, stats, shape):
         slide = self._get_slide(text_frame)
         dev_list = []
         for dev, data in stats.by_developer.items():
@@ -63,9 +70,9 @@ class PlaceholderRenderer:
         dev_list.sort(key=lambda x: x[1], reverse=True)
         top10 = dev_list[:10]
 
-        left = Inches(0.5)
-        top = Inches(1.5)
-        width = Inches(8)
+        left = shape.left
+        top = shape.top
+        width = shape.width
         rows = len(top10) + 1
         height = Inches(0.3) * rows
 
@@ -78,16 +85,20 @@ class PlaceholderRenderer:
             table.cell(i, 0).text = dev
             table.cell(i, 1).text = str(total)
 
-    def _insert_chart_monthly_trend(self, text_frame, stats):
+        self._remove_shape(shape)
+
+    def _insert_chart_monthly_trend(self, text_frame, stats, shape):
         slide = self._get_slide(text_frame)
         months = sorted(stats.by_month.keys())
         if months:
             cat1 = [stats.by_month[m]['errors1'] for m in months]
             cat2 = [stats.by_month[m]['errors2'] for m in months]
             chart_path = self.chart_builder.create_monthly_trend_chart(months, cat1, cat2)
-            slide.shapes.add_picture(chart_path, Inches(0.5), Inches(1.5), width=Inches(7.5))
+            slide.shapes.add_picture(chart_path, shape.left, shape.top,
+                                     width=shape.width, height=shape.height)
+        self._remove_shape(shape)
 
-    def _insert_chart_errors_by_type(self, text_frame, stats):
+    def _insert_chart_errors_by_type(self, text_frame, stats, shape):
         slide = self._get_slide(text_frame)
         types = [(t, d['errors1']) for t, d in stats.by_type.items()]
         types.sort(key=lambda x: x[1], reverse=True)
@@ -98,4 +109,6 @@ class PlaceholderRenderer:
             chart_path = self.chart_builder.create_horizontal_bar_chart(
                 categories, errors, title='Ошибки категории 1 по типам документов'
             )
-            slide.shapes.add_picture(chart_path, Inches(0.5), Inches(1.5), width=Inches(7.5))
+            slide.shapes.add_picture(chart_path, shape.left, shape.top,
+                                     width=shape.width, height=shape.height)
+        self._remove_shape(shape)

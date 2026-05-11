@@ -12,6 +12,13 @@ class ChartBuilder:
     def __init__(self):
         self._temp_files = []
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.cleanup()
+        return False
+
     def _save_and_close(self, fig) -> str:
         tmp = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
         fig.savefig(tmp.name, dpi=150, bbox_inches='tight')
@@ -84,4 +91,20 @@ class ChartBuilder:
         ax.grid(True, alpha=0.3)
         ax.legend()
         plt.xticks(rotation=45)
+        return self._save_and_close(fig)
+
+    def create_vertical_bar_chart(self,
+                                 categories: List[str],
+                                 values: List[int],
+                                 title: str = '',
+                                 xlabel: str = '',
+                                 ylabel: str = '') -> str:
+        """Вертикальная столбчатая диаграмма."""
+        fig, ax = plt.subplots(figsize=(8, 5))
+        ax.bar(categories, values, color='#4472C4')
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+        ax.set_title(title)
+        plt.xticks(rotation=45, ha='right')
+        plt.tight_layout()
         return self._save_and_close(fig)

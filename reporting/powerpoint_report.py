@@ -21,25 +21,27 @@ class PowerpointReport(BaseReport):
         self.renderer = PlaceholderRenderer(chart_builder)
 
     def generate(self, statistics: Statistics, config: ConfigModel, output_path: str) -> str:
-        prs = self.template_mgr.get_presentation_with_theme(config.custom_template_path)
-        context = self._build_context(statistics, config)
+        with self.chart_builder:
+            prs = self.template_mgr.get_presentation_with_theme(config.custom_template_path)
+            context = self._build_context(statistics, config)
 
-        self._add_title_slide(prs, context)
-        self._add_period_slide(prs, context, statistics)
-        self._add_types_remarks_slide(prs, statistics)
-        self._add_docs_with_remarks_slide(prs, statistics)
-        self._add_errors_vs_a4_slide(prs, statistics)
-        self._add_monthly_trend_slide(prs, statistics)
-        self._add_review_leaders_slide(prs, statistics)
-        self._add_errors_by_type_top10_slide(prs, statistics)
-        self._add_developers_rating_slide(prs, statistics)
-        self._add_conclusions1_slide(prs)
-        self._add_conclusions2_slide(prs)
-        self._add_specific_analysis_slide(prs, statistics)
-        self._add_closing_slide(prs)
+            self._add_title_slide(prs, context)
+            self._add_period_slide(prs, context, statistics)
+            self._add_types_remarks_slide(prs, statistics)
+            self._add_file_groups_slide(prs, statistics)      # новый слайд
+            self._add_docs_with_remarks_slide(prs, statistics)
+            self._add_errors_vs_a4_slide(prs, statistics)
+            self._add_monthly_trend_slide(prs, statistics)
+            self._add_review_leaders_slide(prs, statistics)
+            self._add_errors_by_type_top10_slide(prs, statistics)
+            self._add_developers_rating_slide(prs, statistics)
+            self._add_conclusions1_slide(prs)
+            self._add_conclusions2_slide(prs)
+            self._add_specific_analysis_slide(prs, statistics)
+            self._add_closing_slide(prs)
 
-        self.renderer.render(prs, context, statistics, config)
-        prs.save(output_path)
+            self.renderer.render(prs, context, statistics, config)
+            prs.save(output_path)
         return output_path
 
     def _build_context(self, stats: Statistics, config: ConfigModel) -> dict:
@@ -48,7 +50,6 @@ class PowerpointReport(BaseReport):
         total_docs = stats.total_docs
         docs_with = stats.docs_with_errors
 
-        # Определяем период
         if config.period_start or config.period_end:
             start_str = config.period_start.strftime('%d.%m.%Y') if config.period_start else '...'
             end_str = config.period_end.strftime('%d.%m.%Y') if config.period_end else '...'
@@ -125,6 +126,26 @@ class PowerpointReport(BaseReport):
         for doc_type in sorted(stats.by_type.keys()):
             p = tf.add_paragraph()
             p.text = doc_type
+
+    def _add_file_groups_slide(self, prs, stats):
+        """Слайд с гистограммой по группам файлов."""
+        if not stats.docs_by_file_prefix:
+            return
+        layout = self._find_layout(prs, ['заголовок', 'title'])
+        slide = prs.slides.add_slide(layout)
+        if slide.shapes.title:
+            slide.shapes.title.text = "Количество документов по группам файлов"
+        groups = sorted(stats.docs_by_file_prefix.items(), key=lambda x: x[1], reverse=True)
+        categories = [g[0] for g in groups]
+        values = [g[1] for g in groups]
+        if categories:
+            chart_path = self.chart_builder.create_vertical_bar_chart(
+                categories, values,
+                title='',
+                xlabel='Группа файлов',
+                ylabel='Количество документов'
+            )
+            slide.shapes.add_picture(chart_path, Inches(0.5), Inches(1.5), width=Inches(8.5))
 
     def _add_docs_with_remarks_slide(self, prs, stats):
         layout = self._find_layout(prs, ['заголовок'])

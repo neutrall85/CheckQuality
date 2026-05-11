@@ -5,19 +5,18 @@ import re
 def parse_date(value: Union[str, float, int, datetime, date, None]) -> Optional[date]:
     if value is None:
         return None
-    # Если openpyxl вернул готовый datetime/date
     if isinstance(value, datetime):
         return value.date()
     if isinstance(value, date):
         return value
-    # Серийный номер Excel (число)
     if isinstance(value, (int, float)):
+        if value < 1:   # Значения менее единицы (например, чистое время) – не дата
+            return None
         try:
             base = date(1899, 12, 30)
             return base + timedelta(days=int(value))
         except (ValueError, OverflowError):
             return None
-    # Строковое представление
     if isinstance(value, str):
         value = value.strip()
         if not value:

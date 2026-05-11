@@ -13,7 +13,9 @@ logger = logging.getLogger(__name__)
 class ExcelLoader(IDataLoader):
     """Загрузчик данных из Excel-файлов с итеративной обработкой."""
 
-    TARGET_SHEET_KEYWORDS = ['замечания', 'данные']
+    # Список приоритетных имён листов (точное совпадение без учёта регистра)
+    PRIORITY_SHEETS = ['Журнал', 'Журнал ', 'Замечания', 'Лист1']
+
     HEADER_ROW_MAX = 20
 
     def __init__(self, normalize_types: Optional[Callable[[str], str]] = None,
@@ -37,7 +39,8 @@ class ExcelLoader(IDataLoader):
         try:
             ws = self._get_target_sheet(wb)
             if ws is None:
-                raise ValueError(f"Не найден лист с данными в файле {file_path}")
+                raise ValueError(f"Не найден подходящий лист в файле {file_path}. "
+                                 f"Ожидались: {', '.join(self.PRIORITY_SHEETS)}")
             start_row = self._find_data_start_row(ws)
             for row in ws.iter_rows(min_row=start_row, max_col=8, values_only=True):
                 if self._is_tech_row(row):
@@ -49,16 +52,12 @@ class ExcelLoader(IDataLoader):
             wb.close()
 
     def _get_target_sheet(self, wb) -> Optional[openpyxl.worksheet.worksheet.Worksheet]:
-        for sheet_name in wb.sheetnames:
-            name_lower = sheet_name.lower()
-            for kw in self.TARGET_SHEET_KEYWORDS:
-                if kw in name_lower:
-                    return wb[sheet_name]
-        # Если не нашли, вернуть первый непустой лист
-        for sheet_name in wb.sheetnames:
-            ws = wb[sheet_name]
-            if ws.max_row > 0:
-                return ws
+        """Ищет лист строго по приоритетным именам: Журнал -> Замечания -> Лист1."""
+        sheets = {sheet_name.lower(): sheet_name for sheet_name in wb.sheetnames}
+        for priority_name in self.PRIORITY_SHEETS:
+            target_lower = priority_name.lower()
+            if target_lower in sheets:
+                return wb[sheets[target_lower]]
         return None
 
     def _find_data_start_row(self, ws) -> int:
@@ -87,6 +86,10 @@ class ExcelLoader(IDataLoader):
             return True
         val_a = row[0]
         if isinstance(val_a, str) and re.match(r'^\d{4}-\d{2}-\d{2}', val_a.strip()):
+            # Если первый столбец похож на дату, но есть другие значимые данные,
+            # то не считаем строку технической
+            if any(v is not None for v in row[2:8]):
+                return False
             return True
         return False
 

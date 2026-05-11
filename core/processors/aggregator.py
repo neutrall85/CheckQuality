@@ -5,7 +5,11 @@ from core.models.statistics import Statistics
 
 
 class Aggregator:
-    """Агрегирует список документов в объект Statistics."""
+    """Агрегирует список документов в объект Statistics.
+
+    selected_developers влияет только на группировку by_developer,
+    но НЕ фильтрует общие показатели (total_docs, total_errors и т.д.).
+    """
 
     def aggregate(self, documents: List[Document],
                   selected_developers: Optional[List[str]] = None) -> Statistics:
@@ -28,11 +32,19 @@ class Aggregator:
             if doc.errors_cat2 > stats.max_errors_cat2:
                 stats.max_errors_cat2 = doc.errors_cat2
 
-            # Подсчёт для круговой диаграммы
+            # Подсчёт для круговой диаграммы (старые поля, оставим для совместимости)
             if doc.errors_cat1 > 0:
                 stats.total_docs_with_cat1 += 1
             if doc.errors_cat2 > 0:
                 stats.total_docs_with_cat2 += 1
+
+            # Новые взаимоисключающие категории для круговой диаграммы
+            if doc.errors_cat1 > 0 and doc.errors_cat2 > 0:
+                stats.total_docs_with_both += 1
+            elif doc.errors_cat1 > 0:
+                stats.total_docs_with_only_cat1 += 1
+            elif doc.errors_cat2 > 0:
+                stats.total_docs_with_only_cat2 += 1
 
             # По типам документов
             type_stats = stats.by_type.setdefault(doc.doc_type, {

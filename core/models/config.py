@@ -8,7 +8,6 @@ class ConfigModel:
     """Модель конфигурации приложения."""
     theme: str = "light"
     last_output_path: str = ""
-    deduplication_key: str = "document_number"
     developer_separators: List[str] = field(default_factory=lambda: [",", ";", "и", "\n", "\\s{2,}"])
     memory_warning_threshold: int = 500
     use_custom_template: bool = False

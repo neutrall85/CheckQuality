@@ -22,7 +22,7 @@ SECTION_TITLE_STYLE = {
 }
 
 class ExcelSingleSheetReport(BaseReport):
-    """Генератор сводного отчёта Excel – 7 диаграмм, начиная с L8."""
+    """Генератор сводного отчёта Excel – 8 диаграмм (добавлена гистограмма по группам файлов)."""
 
     def __init__(self):
         self.workbook = None
@@ -46,20 +46,16 @@ class ExcelSingleSheetReport(BaseReport):
 
         chart_ws = self.workbook.add_worksheet('_chart_data')
         chart_ws.hide()
-        num_months, num_devs = self._write_chart_data(chart_ws, statistics)
+        num_months, num_devs, num_groups = self._write_chart_data(chart_ws, statistics)
 
         row = 0
         row = self._zone1(ws, statistics, config, bold_fmt, cell_wrap, section_title_fmt)
-
         row = self._zone2(ws, statistics, row, header_fmt, cell_wrap, pct_fmt, num_fmt,
                           section_title_fmt, total_fmt, total_fmt_int)
-
         row = self._zone3(ws, statistics, row, header_fmt, cell_wrap, num_fmt,
                           section_title_fmt, total_fmt, total_fmt_int)
-
         row = self._zone6(ws, statistics, row, header_fmt, cell_wrap, num_fmt,
                           section_title_fmt, total_fmt, total_fmt_int)
-
         self._zone7(ws, statistics, row, bold_fmt, cell_wrap, num_fmt, pct_fmt,
                      section_title_fmt)
 
@@ -67,7 +63,7 @@ class ExcelSingleSheetReport(BaseReport):
         for col in range(1, 12):
             ws.set_column(col, col, 12)
 
-        self._insert_charts(ws, statistics, num_months, num_devs)
+        self._insert_charts(ws, statistics, num_months, num_devs, num_groups)
 
         self.workbook.close()
         return output_path
@@ -76,26 +72,29 @@ class ExcelSingleSheetReport(BaseReport):
     # Скрытый лист с данными для ВСЕХ диаграмм
     # -----------------------------------------------------------------
     def _write_chart_data(self, ws, stats):
-        # 1. Круговая "Распределение ошибок"
+        # 1. Круговая "Распределение ошибок" (взаимоисключающие категории)
         ws.write('A1', 'Категория')
         ws.write('B1', 'Количество документов')
-        docs_cat1 = stats.total_docs_with_cat1
-        docs_cat2 = stats.total_docs_with_cat2
+        docs_cat1 = stats.total_docs_with_only_cat1
+        docs_cat2 = stats.total_docs_with_only_cat2
+        docs_both = stats.total_docs_with_both
         docs_no_errors = stats.total_docs - stats.docs_with_errors
-        ws.write('A2', 'Ошибки кат.1:')
+        ws.write('A2', 'Только кат.1')
         ws.write('B2', docs_cat1)
-        ws.write('A3', 'Ошибки кат.2:')
+        ws.write('A3', 'Только кат.2')
         ws.write('B3', docs_cat2)
-        ws.write('A4', 'Без ошибок:')
-        ws.write('B4', docs_no_errors)
+        ws.write('A4', 'Обе категории')
+        ws.write('B4', docs_both)
+        ws.write('A5', 'Без ошибок')
+        ws.write('B5', docs_no_errors)
 
         # 2. Круговая "Доля документов с ошибками"
-        ws.write('A6', 'Категория')
-        ws.write('B6', 'Количество документов')
-        ws.write('A7', 'С ошибками:')
-        ws.write('B7', stats.docs_with_errors)
-        ws.write('A8', 'Без ошибок:')
-        ws.write('B8', docs_no_errors)
+        ws.write('A7', 'Категория')
+        ws.write('B7', 'Количество документов')
+        ws.write('A8', 'С ошибками:')
+        ws.write('B8', stats.docs_with_errors)
+        ws.write('A9', 'Без ошибок:')
+        ws.write('B9', docs_no_errors)
 
         # 3. Гистограмма "Количество документов по месяцам"
         ws.write('D1', 'Месяц')
@@ -132,7 +131,15 @@ class ExcelSingleSheetReport(BaseReport):
             ws.write(i, 12, d['errors1'])
             ws.write(i, 13, d['errors2'])
 
-        return len(months), len(devs)
+        # 8. Данные для гистограммы по группам файлов
+        ws.write('P1', 'Группа файлов')
+        ws.write('Q1', 'Количество документов')
+        groups = sorted(stats.docs_by_file_prefix.items(), key=lambda x: x[1], reverse=True)
+        for i, (group, count) in enumerate(groups, start=2):
+            ws.write(i-1, 15, group)   # колонка P (индекс 15)
+            ws.write(i-1, 16, count)   # колонка Q (индекс 16)
+
+        return len(months), len(devs), len(groups)
 
     # -----------------------------------------------------------------
     # Зона 1 – Заголовок и общая информация
@@ -147,7 +154,6 @@ class ExcelSingleSheetReport(BaseReport):
         ws.write(0, 0, 'СТАТИСТИКА ЖУРНАЛА ОШИБОК', title_format)
         ws.write(1, 0, f'Дата формирования: {datetime.now():%d.%m.%Y %H:%M}')
 
-        # Формируем строку периода
         if config.period_start or config.period_end:
             start_str = config.period_start.strftime('%d.%m.%Y') if config.period_start else '...'
             end_str = config.period_end.strftime('%d.%m.%Y') if config.period_end else '...'
@@ -229,14 +235,25 @@ class ExcelSingleSheetReport(BaseReport):
         current = start_row + 1
         ws.write(current, 0, 'СТАТИСТИКА ПО РАЗРАБОТЧИКАМ (ВСЕ АВТОРЫ)', section_title_fmt)
         current += 2
+        current = self._write_developer_rating_table(ws, stats, current, hdr, cell, num,
+                                                     total_fmt, total_fmt_int)
+        current += 1
+        current = self._write_additional_info(ws, stats, current)
+        current += 1
+        current = self._write_quality_distribution(ws, stats, current)
+        return current
+
+    def _write_developer_rating_table(self, ws, stats, start_row, hdr, cell, num,
+                                      total_fmt, total_fmt_int):
+        """Таблица рейтинга разработчиков."""
         headers = ['Разработчик','Количество документов','Количество форматов А4',
                    'Всего ошибок кат.1','Всего ошибок кат.2',
                    'Средн. кол-во ошибок кат.1 на док','Средн. кол-во ошибок кат.2 на док',
                    'Средн. кол-во ошибок кат.1 на А4','Средн. кол-во ошибок кат.2 на А4',
                    'Коэф. ошибок','Рейтинг']
         for c, h in enumerate(headers):
-            ws.write(current, c, h, hdr)
-        current += 1
+            ws.write(start_row, c, h, hdr)
+        current = start_row + 1
 
         devs = []
         for dev, d in stats.by_developer.items():
@@ -252,11 +269,15 @@ class ExcelSingleSheetReport(BaseReport):
         devs.sort(key=lambda x: x[5], reverse=True)
 
         for rank, it in enumerate(devs, start=1):
-            color = GREEN_BG
-            if it[5] >= 3: color = RED_BG
-            elif it[5] >= 1.5: color = ORANGE_BG
-            elif it[5] >= 0.5: color = YELLOW_BG
-            # ИСПРАВЛЕНО: добавлен числовой формат для цветной ячейки
+            avg1_val = it[5]
+            if avg1_val >= THRESHOLD_POOR:
+                color = COLOR_POOR
+            elif avg1_val >= THRESHOLD_GOOD:
+                color = COLOR_AVERAGE
+            elif avg1_val >= THRESHOLD_EXCELLENT:
+                color = COLOR_GOOD
+            else:
+                color = COLOR_EXCELLENT
             fmt_color = self.workbook.add_format({
                 **FMT_CELL_WRAP, 'bg_color': color, 'border': 1, 'num_format': '0.00'
             })
@@ -265,8 +286,8 @@ class ExcelSingleSheetReport(BaseReport):
             ws.write(current, 2, it[2], cell)
             ws.write(current, 3, it[3], cell)
             ws.write(current, 4, it[4], cell)
-            ws.write(current, 5, it[5], fmt_color)   # avg1
-            ws.write(current, 6, it[6], num)         # avg2
+            ws.write(current, 5, it[5], fmt_color)
+            ws.write(current, 6, it[6], num)
             ws.write(current, 7, it[7], num)
             ws.write(current, 8, it[8], num)
             ws.write(current, 9, it[9], num)
@@ -290,37 +311,58 @@ class ExcelSingleSheetReport(BaseReport):
         coef_all = (stats.total_errors_cat1 + 0.2 * stats.total_errors_cat2) / total_cnt if total_cnt else 0
         ws.write(current, 9, coef_all, total_fmt)
         ws.write(current, 10, f'Всего: {len(devs)}', total_fmt_int)
-        current += 2
+        return current + 1
 
-        # Доп. информация
-        ws.write(current, 0, 'ДОПОЛНИТЕЛЬНАЯ ИНФОРМАЦИЯ:', self.workbook.add_format(FMT_BOLD))
+    def _write_additional_info(self, ws, stats, start_row):
+        """Дополнительная информация."""
+        current = start_row
+        bold_title = self.workbook.add_format(FMT_BOLD)
+        ws.write(current, 0, 'ДОПОЛНИТЕЛЬНАЯ ИНФОРМАЦИЯ:', bold_title)
         current += 1
-        ws.write(current, 0, f'• Всего уникальных разработчиков: {len(devs)}')
+        total_cnt = sum(d['count'] for d in stats.by_developer.values())
+        total_a4 = sum(d['a4'] for d in stats.by_developer.values())
+        num_devs = len(stats.by_developer)
+        if num_devs == 0:
+            return current
+        coef_all = (stats.total_errors_cat1 + 0.2 * stats.total_errors_cat2) / total_cnt if total_cnt else 0
+        ws.write(current, 0, f'• Всего уникальных разработчиков: {num_devs}')
         current += 1
-        ws.write(current, 0, f'• Среднее количество документов на разработчика: {total_cnt/len(devs):.2f}')
+        ws.write(current, 0, f'• Среднее количество документов на разработчика: {total_cnt/num_devs:.2f}')
         current += 1
-        ws.write(current, 0, f'• Среднее количество форматов А4 на разработчика: {total_a4/len(devs):.2f}')
+        ws.write(current, 0, f'• Среднее количество форматов А4 на разработчика: {total_a4/num_devs:.2f}')
         current += 1
         ws.write(current, 0, f'• Общий коэффициент ошибок: {coef_all:.2f}')
-        current += 2
+        return current + 1
 
-        # Распределение по качеству (цветное)
+    def _write_quality_distribution(self, ws, stats, start_row):
+        """Распределение по качеству (цветное)."""
+        current = start_row
         bold_title = self.workbook.add_format(FMT_BOLD)
         ws.write(current, 0, 'РАСПРЕДЕЛЕНИЕ ПО КАЧЕСТВУ РАБОТЫ:', bold_title)
         current += 1
 
-        quality = {'<0.5': 0, '0.5-1.5': 0, '1.5-3': 0, '>=3': 0}
-        for it in devs:
-            avg = it[5]
-            if avg < 0.5: quality['<0.5'] += 1
-            elif avg < 1.5: quality['0.5-1.5'] += 1
-            elif avg < 3: quality['1.5-3'] += 1
-            else: quality['>=3'] += 1
+        devs_avg = []
+        for dev, d in stats.by_developer.items():
+            cnt = d['count']
+            if cnt == 0: continue
+            avg1 = d['errors1'] / cnt
+            devs_avg.append(avg1)
 
-        fmt_excellent = self.workbook.add_format({'bg_color': GREEN_BG, 'border': 1})
-        fmt_good = self.workbook.add_format({'bg_color': YELLOW_BG, 'border': 1})
-        fmt_average = self.workbook.add_format({'bg_color': ORANGE_BG, 'border': 1})
-        fmt_poor = self.workbook.add_format({'bg_color': RED_BG, 'border': 1})
+        quality = {'<0.5': 0, '0.5-1.5': 0, '1.5-3': 0, '>=3': 0}
+        for avg in devs_avg:
+            if avg < THRESHOLD_EXCELLENT:
+                quality['<0.5'] += 1
+            elif avg < THRESHOLD_GOOD:
+                quality['0.5-1.5'] += 1
+            elif avg < THRESHOLD_POOR:
+                quality['1.5-3'] += 1
+            else:
+                quality['>=3'] += 1
+
+        fmt_excellent = self.workbook.add_format({'bg_color': COLOR_EXCELLENT, 'border': 1})
+        fmt_good = self.workbook.add_format({'bg_color': COLOR_GOOD, 'border': 1})
+        fmt_average = self.workbook.add_format({'bg_color': COLOR_AVERAGE, 'border': 1})
+        fmt_poor = self.workbook.add_format({'bg_color': COLOR_POOR, 'border': 1})
 
         mapping = [
             ('<0.5', 'Отличное качество', fmt_excellent),
@@ -328,9 +370,10 @@ class ExcelSingleSheetReport(BaseReport):
             ('1.5-3', 'Среднее качество', fmt_average),
             ('>=3', 'Требует улучшения', fmt_poor)
         ]
+        total_devs = len(devs_avg)
         for lbl, desc, fmt in mapping:
             cnt = quality[lbl]
-            pct = (cnt / len(devs) * 100) if len(devs) else 0
+            pct = (cnt / total_devs * 100) if total_devs else 0
             ws.write(current, 0, f'• {desc} ({lbl} ошибок): {cnt} ({pct:.1f}%)', fmt)
             current += 1
 
@@ -358,10 +401,12 @@ class ExcelSingleSheetReport(BaseReport):
             avg2 = e2 / cnt if cnt else 0
             a1a4 = e1 / a4 if a4 else 0
             a2a4 = e2 / a4 if a4 else 0
-            color = GREEN_BG
-            if avg1 >= 3: color = RED_BG
-            elif avg1 >= 1.5: color = YELLOW_BG
-            # ИСПРАВЛЕНО: добавлен числовой формат для цветной ячейки
+            if avg1 >= THRESHOLD_POOR:
+                color = COLOR_POOR
+            elif avg1 >= THRESHOLD_GOOD:
+                color = COLOR_GOOD
+            else:
+                color = COLOR_EXCELLENT
             fmt_color = self.workbook.add_format({
                 **FMT_CELL_WRAP, 'bg_color': color, 'border': 1, 'num_format': '0.00'
             })
@@ -431,131 +476,173 @@ class ExcelSingleSheetReport(BaseReport):
         ws.write(current, 1, stats.max_errors_cat2)
 
     # -----------------------------------------------------------------
-    # Вставка всех 7 диаграмм (стартуем с L8, шаг 20 строк)
+    # Вставка всех 8 диаграмм
     # -----------------------------------------------------------------
-    def _insert_charts(self, ws, stats, num_months, num_devs):
+    def _insert_charts(self, ws, stats, num_months, num_devs, num_groups):
         if stats.total_docs == 0:
             return
-
-        scale_width = 1.5
-        scale_height = 1.2
         chart_row = 8
         row_step = 20
 
-        # 1. Круговая "Распределение ошибок"
+        self._add_pie_errors(ws, chart_row, 1.5, 1.2)
+        chart_row += row_step
+        self._add_pie_with_errors(ws, chart_row, 1.5, 1.2)
+        chart_row += row_step
+        self._add_column_months(ws, chart_row, 1.5, 1.2, num_months)
+        chart_row += row_step
+        self._add_column_errors_months(ws, chart_row, 1.5, 1.2, num_months)
+        chart_row += row_step
+        self._add_column_dev_docs(ws, chart_row, 1.5, 1.2, num_devs)
+        chart_row += row_step
+        self._add_column_dev_cat1(ws, chart_row, 1.5, 1.2, num_devs)
+        chart_row += row_step
+        self._add_column_dev_cat2(ws, chart_row, 1.5, 1.2, num_devs)
+        chart_row += row_step
+        self._add_column_file_groups(ws, chart_row, 1.5, 1.2, num_groups)
+
+    def _add_pie_errors(self, ws, row, scale_w, scale_h):
         pie1 = self.workbook.add_chart({'type': 'pie'})
         pie1.add_series({
             'name': '=_chart_data!$A$1',
-            'categories': '=_chart_data!$A$2:$A$4',
-            'values': '=_chart_data!$B$2:$B$4',
+            'categories': '=_chart_data!$A$2:$A$5',
+            'values': '=_chart_data!$B$2:$B$5',
             'data_labels': {'value': True, 'category': True, 'separator': '\n', 'num_format': '0'},
+            'points': [
+                {'fill': {'color': '#FFB3B3'}},
+                {'fill': {'color': '#B3D4FF'}},
+                {'fill': {'color': '#D4B3FF'}},
+                {'fill': {'color': '#B3FFB3'}},
+            ]
         })
         pie1.set_title({'name': 'Распределение ошибок'})
-        ws.insert_chart(f'L{chart_row}', pie1, {'x_scale': scale_width, 'y_scale': scale_height})
-        chart_row += row_step
+        ws.insert_chart(f'L{row}', pie1, {'x_scale': scale_w, 'y_scale': scale_h})
 
-        # 2. Круговая "Доля документов с ошибками"
-        if stats.total_docs > 0:
-            pie2 = self.workbook.add_chart({'type': 'pie'})
-            pie2.add_series({
-                'name': '=_chart_data!$A$6',
-                'categories': '=_chart_data!$A$7:$A$8',
-                'values': '=_chart_data!$B$7:$B$8',
-                'data_labels': {'percentage': True, 'category': True, 'separator': '\n'},
-            })
-            pie2.set_title({'name': 'Доля документов с ошибками'})
-            ws.insert_chart(f'L{chart_row}', pie2, {'x_scale': scale_width, 'y_scale': scale_height})
-            chart_row += row_step
+    def _add_pie_with_errors(self, ws, row, scale_w, scale_h):
+        pie2 = self.workbook.add_chart({'type': 'pie'})
+        pie2.add_series({
+            'name': '=_chart_data!$A$7',
+            'categories': '=_chart_data!$A$8:$A$9',
+            'values': '=_chart_data!$B$8:$B$9',
+            'data_labels': {'percentage': True, 'category': True, 'separator': '\n'},
+            'points': [
+                {'fill': {'color': '#FFB3B3'}},
+                {'fill': {'color': '#B3FFB3'}},
+            ]
+        })
+        pie2.set_title({'name': 'Доля документов с ошибками'})
+        ws.insert_chart(f'L{row}', pie2, {'x_scale': scale_w, 'y_scale': scale_h})
 
-        # 3. Гистограмма "Динамика проверки документов по месяцам"
-        if num_months > 0:
-            end_row_months = num_months + 1
-            col1 = self.workbook.add_chart({'type': 'column'})
-            col1.add_series({
-                'name': 'Количество документов',
-                'categories': f'=_chart_data!$D$2:$D${end_row_months}',
-                'values': f'=_chart_data!$E$2:$E${end_row_months}',
-                'data_labels': {'value': True},
-                'fill': {'color': '#4472C4'},
-            })
-            col1.set_title({'name': 'Динамика проверки документов по месяцам'})
-            col1.set_x_axis({'name': 'Месяц'})
-            col1.set_y_axis({'name': 'Количество документов'})
-            col1.set_legend({'position': 'bottom'})
-            ws.insert_chart(f'L{chart_row}', col1, {'x_scale': scale_width, 'y_scale': scale_height})
-            chart_row += row_step
+    def _add_column_months(self, ws, row, scale_w, scale_h, num_months):
+        if num_months == 0:
+            return
+        end_row_months = num_months + 1
+        col1 = self.workbook.add_chart({'type': 'column'})
+        col1.add_series({
+            'name': 'Количество документов',
+            'categories': f'=_chart_data!$D$2:$D${end_row_months}',
+            'values': f'=_chart_data!$E$2:$E${end_row_months}',
+            'data_labels': {'value': True},
+            'fill': {'color': '#4472C4'},
+        })
+        col1.set_title({'name': 'Динамика проверки документов по месяцам'})
+        col1.set_x_axis({'name': 'Месяц'})
+        col1.set_y_axis({'name': 'Количество документов'})
+        col1.set_legend({'position': 'bottom'})
+        ws.insert_chart(f'L{row}', col1, {'x_scale': scale_w, 'y_scale': scale_h})
 
-        # 4. Гистограмма "Динамика ошибок по месяцам"
-        if num_months > 0:
-            col2 = self.workbook.add_chart({'type': 'column'})
-            col2.add_series({
-                'name': 'Ошибки кат.1',
-                'categories': f'=_chart_data!$G$2:$G${end_row_months}',
-                'values': f'=_chart_data!$H$2:$H${end_row_months}',
-                'fill': {'color': '#C00000'},
-                'data_labels': {'value': True},
-            })
-            col2.add_series({
-                'name': 'Ошибки кат.2',
-                'categories': f'=_chart_data!$G$2:$G${end_row_months}',
-                'values': f'=_chart_data!$I$2:$I${end_row_months}',
-                'fill': {'color': '#FF8000'},
-                'data_labels': {'value': True},
-            })
-            col2.set_title({'name': 'Динамика ошибок по месяцам'})
-            col2.set_x_axis({'name': 'Месяц'})
-            col2.set_y_axis({'name': 'Количество ошибок'})
-            col2.set_legend({'position': 'bottom'})
-            ws.insert_chart(f'L{chart_row}', col2, {'x_scale': scale_width, 'y_scale': scale_height})
-            chart_row += row_step
+    def _add_column_errors_months(self, ws, row, scale_w, scale_h, num_months):
+        if num_months == 0:
+            return
+        end_row_months = num_months + 1
+        col2 = self.workbook.add_chart({'type': 'column'})
+        col2.add_series({
+            'name': 'Ошибки кат.1',
+            'categories': f'=_chart_data!$G$2:$G${end_row_months}',
+            'values': f'=_chart_data!$H$2:$H${end_row_months}',
+            'fill': {'color': '#C00000'},
+            'data_labels': {'value': True, 'num_format': '# ##0;;'},
+        })
+        col2.add_series({
+            'name': 'Ошибки кат.2',
+            'categories': f'=_chart_data!$G$2:$G${end_row_months}',
+            'values': f'=_chart_data!$I$2:$I${end_row_months}',
+            'fill': {'color': '#FF8000'},
+            'data_labels': {'value': True, 'num_format': '# ##0;;'},
+        })
+        col2.set_title({'name': 'Динамика ошибок по месяцам'})
+        col2.set_x_axis({'name': 'Месяц'})
+        col2.set_y_axis({'name': 'Количество ошибок'})
+        col2.set_legend({'position': 'bottom'})
+        ws.insert_chart(f'L{row}', col2, {'x_scale': scale_w, 'y_scale': scale_h})
 
-        # 5. Гистограмма "Количество документов по разработчикам"
-        if num_devs > 0:
-            end_row_devs = num_devs + 1
-            col3 = self.workbook.add_chart({'type': 'column'})
-            col3.add_series({
-                'name': 'Количество документов',
-                'categories': f'=_chart_data!$K$2:$K${end_row_devs}',
-                'values': f'=_chart_data!$L$2:$L${end_row_devs}',
-                'fill': {'color': '#4472C4'},
-                'data_labels': {'value': True},
-            })
-            col3.set_title({'name': 'Количество документов по разработчикам'})
-            col3.set_x_axis({'name': 'Разработчик'})
-            col3.set_y_axis({'name': 'Количество документов'})
-            col3.set_legend({'position': 'bottom'})
-            ws.insert_chart(f'L{chart_row}', col3, {'x_scale': scale_width, 'y_scale': scale_height})
-            chart_row += row_step
+    def _add_column_dev_docs(self, ws, row, scale_w, scale_h, num_devs):
+        if num_devs == 0:
+            return
+        end_row_devs = num_devs + 1
+        col3 = self.workbook.add_chart({'type': 'column'})
+        col3.add_series({
+            'name': 'Количество документов',
+            'categories': f'=_chart_data!$K$2:$K${end_row_devs}',
+            'values': f'=_chart_data!$L$2:$L${end_row_devs}',
+            'fill': {'color': '#4472C4'},
+            'data_labels': {'value': True},
+        })
+        col3.set_title({'name': 'Количество документов по разработчикам'})
+        col3.set_x_axis({'name': 'Разработчик'})
+        col3.set_y_axis({'name': 'Количество документов'})
+        col3.set_legend({'position': 'bottom'})
+        ws.insert_chart(f'L{row}', col3, {'x_scale': scale_w, 'y_scale': scale_h})
 
-        # 6. Гистограмма "Ошибки кат. 1 по разработчикам"
-        if num_devs > 0:
-            col4 = self.workbook.add_chart({'type': 'column'})
-            col4.add_series({
-                'name': 'Ошибки кат.1',
-                'categories': f'=_chart_data!$K$2:$K${end_row_devs}',
-                'values': f'=_chart_data!$M$2:$M${end_row_devs}',
-                'fill': {'color': '#C00000'},
-                'data_labels': {'value': True},
-            })
-            col4.set_title({'name': 'Ошибки категории 1 по разработчикам'})
-            col4.set_x_axis({'name': 'Разработчик'})
-            col4.set_y_axis({'name': 'Количество ошибок'})
-            col4.set_legend({'position': 'bottom'})
-            ws.insert_chart(f'L{chart_row}', col4, {'x_scale': scale_width, 'y_scale': scale_height})
-            chart_row += row_step
+    def _add_column_dev_cat1(self, ws, row, scale_w, scale_h, num_devs):
+        if num_devs == 0:
+            return
+        end_row_devs = num_devs + 1
+        col4 = self.workbook.add_chart({'type': 'column'})
+        col4.add_series({
+            'name': 'Ошибки кат.1',
+            'categories': f'=_chart_data!$K$2:$K${end_row_devs}',
+            'values': f'=_chart_data!$M$2:$M${end_row_devs}',
+            'fill': {'color': '#C00000'},
+            'data_labels': {'value': True},
+        })
+        col4.set_title({'name': 'Ошибки категории 1 по разработчикам'})
+        col4.set_x_axis({'name': 'Разработчик'})
+        col4.set_y_axis({'name': 'Количество ошибок'})
+        col4.set_legend({'position': 'bottom'})
+        ws.insert_chart(f'L{row}', col4, {'x_scale': scale_w, 'y_scale': scale_h})
 
-        # 7. Гистограмма "Ошибки кат. 2 по разработчикам"
-        if num_devs > 0:
-            col5 = self.workbook.add_chart({'type': 'column'})
-            col5.add_series({
-                'name': 'Ошибки кат.2',
-                'categories': f'=_chart_data!$K$2:$K${end_row_devs}',
-                'values': f'=_chart_data!$N$2:$N${end_row_devs}',
-                'fill': {'color': '#FF8000'},
-                'data_labels': {'value': True},
-            })
-            col5.set_title({'name': 'Ошибки категории 2 по разработчикам'})
-            col5.set_x_axis({'name': 'Разработчик'})
-            col5.set_y_axis({'name': 'Количество ошибок'})
-            col5.set_legend({'position': 'bottom'})
-            ws.insert_chart(f'L{chart_row}', col5, {'x_scale': scale_width, 'y_scale': scale_height})
+    def _add_column_dev_cat2(self, ws, row, scale_w, scale_h, num_devs):
+        if num_devs == 0:
+            return
+        end_row_devs = num_devs + 1
+        col5 = self.workbook.add_chart({'type': 'column'})
+        col5.add_series({
+            'name': 'Ошибки кат.2',
+            'categories': f'=_chart_data!$K$2:$K${end_row_devs}',
+            'values': f'=_chart_data!$N$2:$N${end_row_devs}',
+            'fill': {'color': '#FF8000'},
+            'data_labels': {'value': True},
+        })
+        col5.set_title({'name': 'Ошибки категории 2 по разработчикам'})
+        col5.set_x_axis({'name': 'Разработчик'})
+        col5.set_y_axis({'name': 'Количество ошибок'})
+        col5.set_legend({'position': 'bottom'})
+        ws.insert_chart(f'L{row}', col5, {'x_scale': scale_w, 'y_scale': scale_h})
+
+    def _add_column_file_groups(self, ws, row, scale_w, scale_h, num_groups):
+        if num_groups == 0:
+            return
+        end_row = num_groups + 1
+        chart = self.workbook.add_chart({'type': 'column'})
+        chart.add_series({
+            'name': 'Количество документов',
+            'categories': f'=_chart_data!$P$2:$P${end_row}',
+            'values': f'=_chart_data!$Q$2:$Q${end_row}',
+            'fill': {'color': '#4472C4'},
+            'data_labels': {'value': True},
+        })
+        chart.set_title({'name': 'Количество документов по группам файлов (префикс до "_")'})
+        chart.set_x_axis({'name': 'Группа файлов'})
+        chart.set_y_axis({'name': 'Количество документов'})
+        chart.set_legend({'position': 'bottom'})
+        ws.insert_chart(f'L{row}', chart, {'x_scale': scale_w, 'y_scale': scale_h})
